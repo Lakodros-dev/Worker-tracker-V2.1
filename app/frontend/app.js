@@ -3,9 +3,15 @@ const tg = window.Telegram.WebApp;
 tg.ready();
 tg.expand();
 
-// Debug
-console.log('initData:', tg.initData);
-console.log('initDataUnsafe:', tg.initDataUnsafe);
+// Debug - ekranda ko'rsatish
+const debugDiv = document.createElement('div');
+debugDiv.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#000;color:#0f0;padding:10px;font-size:12px;z-index:9999;max-height:200px;overflow:auto;';
+debugDiv.innerHTML = `
+<b>DEBUG:</b><br>
+initData: ${tg.initData ? tg.initData.substring(0, 100) + '...' : 'BO\'SH!'}<br>
+user: ${JSON.stringify(tg.initDataUnsafe?.user || 'YO\'Q')}
+`;
+document.body.appendChild(debugDiv);
 
 // State
 let currentUser = null;
