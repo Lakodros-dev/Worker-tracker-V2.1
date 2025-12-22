@@ -3,6 +3,10 @@ const tg = window.Telegram.WebApp;
 tg.ready();
 tg.expand();
 
+// Debug
+console.log('initData:', tg.initData);
+console.log('initDataUnsafe:', tg.initDataUnsafe);
+
 // State
 let currentUser = null;
 let isAdmin = false;

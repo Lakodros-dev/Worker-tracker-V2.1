@@ -18,12 +18,14 @@ def get_user(telegram_id: int):
 
 
 def create_user(telegram_id: int, username: str, first_name: str, last_name: str):
+    # Admin avtomatik active bo'ladi
+    status = "active" if config.is_admin(telegram_id) else "pending"
     user = {
         "telegram_id": telegram_id,
         "username": username,
         "first_name": first_name,
         "last_name": last_name,
-        "status": "pending",
+        "status": status,
         "created_at": datetime.now().isoformat()
     }
     db.append(USERS_FILE, user)
