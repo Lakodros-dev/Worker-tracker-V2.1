@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="uz">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Davomat Tizimi</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+    <div id="app">
+        <!-- Loading -->
+        <div id="loading" class="screen active">
+            <div class="loader"></div>
+            <p>Yuklanmoqda...</p>
+        </div>
+
+        <!-- Error -->
+        <div id="error-screen" class="screen">
+            <div class="error-icon">⚠️</div>
+            <h2 id="error-title">Xatolik</h2>
+            <p id="error-message"></p>
+            <button onclick="location.reload()">Qayta urinish</button>
+        </div>
+
+        <!-- Main App -->
+        <div id="main-app" class="screen">
+            <!-- Header -->
+            <header>
+                <div class="user-info">
+                    <span id="user-name">Foydalanuvchi</span>
+                    <span id="user-status" class="status-badge">—</span>
+                </div>
+                <div id="admin-badge" class="admin-badge hidden">Admin</div>
+            </header>
+
+            <!-- Navigation -->
+            <nav class="tabs">
+                <button class="tab active" data-tab="dashboard">🏠 Asosiy</button>
+                <button class="tab" data-tab="report">📝 Hisobot</button>
+                <button class="tab" data-tab="statistics">📊 Statistika</button>
+                <button class="tab" data-tab="admin" id="admin-tab" style="display:none">⚙️ Admin</button>
+            </nav>
+
+            <!-- Dashboard Tab -->
+            <div id="dashboard" class="tab-content active">
+                <div class="card">
+                    <h3>Bugungi sessiya</h3>
+                    <div id="session-info">
+                        <p>Sessiya boshlanmagan</p>
+                    </div>
+                    <div class="session-actions">
+                        <button id="start-session-btn" class="btn primary">▶️ Boshlash</button>
+                        <button id="end-session-btn" class="btn danger hidden">⏹️ Tugatish</button>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h3>Joylashuv</h3>
+                    <div id="location-status">
+                        <p>📍 Joylashuv aniqlanmagan</p>
+                    </div>
+                    <button id="send-location-btn" class="btn secondary">📍 Joylashuvni yuborish</button>
+                </div>
+
+                <div class="card">
+                    <h3>Bugungi hisobot</h3>
+                    <div id="report-status">
+                        <p>⏳ Hisobot topshirilmagan</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Report Tab -->
+            <div id="report" class="tab-content">
+                <div class="card">
+                    <h3>Kunlik hisobot</h3>
+                    <textarea id="report-content" placeholder="Bugun bajarilgan ishlar haqida yozing..."></textarea>
+                    <button id="submit-report-btn" class="btn primary">📤 Topshirish</button>
+                </div>
+
+                <div class="card">
+                    <h3>Hisobot tarixi</h3>
+                    <div id="report-history"></div>
+                </div>
+            </div>
+
+            <!-- Statistics Tab -->
+            <div id="statistics" class="tab-content">
+                <div class="card">
+                    <h3>Sana oralig'i</h3>
+                    <div class="date-range">
+                        <input type="date" id="stat-start-date">
+                        <span>—</span>
+                        <input type="date" id="stat-end-date">
+                        <button id="load-stats-btn" class="btn small">Yuklash</button>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h3>Umumiy statistika</h3>
+                    <div id="stats-summary">
+                        <p>Ma'lumot yuklanmagan</p>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h3>Grafik</h3>
+                    <canvas id="stats-chart"></canvas>
+                </div>
+            </div>
+
+            <!-- Admin Tab -->
+            <div id="admin" class="tab-content">
+                <div class="card">
+                    <h3>Kutilayotgan foydalanuvchilar</h3>
+                    <div id="pending-users"></div>
+                </div>
+
+                <div class="card">
+                    <h3>Ish vaqti sozlamalari</h3>
+                    <div class="settings-form">
+                        <label>Ish boshlanishi: <input type="time" id="work-start" value="09:00"></label>
+                        <label>Ish tugashi: <input type="time" id="work-end" value="18:00"></label>
+                        <label>Tushlik boshlanishi: <input type="time" id="lunch-start" value="13:00"></label>
+                        <label>Tushlik tugashi: <input type="time" id="lunch-end" value="14:00"></label>
+                        <button id="save-settings-btn" class="btn primary">💾 Saqlash</button>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h3>Ofis joylashuvi</h3>
+                    <div class="settings-form">
+                        <label>Kenglik: <input type="number" step="any" id="geo-lat" value="41.311081"></label>
+                        <label>Uzunlik: <input type="number" step="any" id="geo-lng" value="69.240562"></label>
+                        <label>Radius (m): <input type="number" id="geo-radius" value="100"></label>
+                        <button id="save-geofence-btn" class="btn primary">💾 Saqlash</button>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h3>Barcha foydalanuvchilar statistikasi</h3>
+                    <div class="date-range">
+                        <input type="date" id="admin-stat-start">
+                        <span>—</span>
+                        <input type="date" id="admin-stat-end">
+                        <button id="load-all-stats-btn" class="btn small">Yuklash</button>
+                    </div>
+                    <div id="all-users-stats"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="config.js"></script>
+    <script src="app.js"></script>
+</body>
+
+</html>
