@@ -62,10 +62,28 @@ def create_user_from_telegram(user_data: dict) -> dict:
     return user
 
 
-async def get_current_user(x_telegram_init_data: str = Header(None)):
-    """Get current user from Telegram WebApp data."""
+async def get_current_user(
+    x_telegram_init_data: str = Header(None),
+    x_browser_token: str = Header(None)
+):
+    """Get current user from Telegram WebApp data or browser token."""
+    
+    # Browser token orqali auth
+    if x_browser_token:
+        try:
+            parts = x_browser_token.split(":")
+            if len(parts) == 2:
+                username, password = parts
+                user = db.find_one(USERS_FILE, "username", username)
+                if user and user.get("password") == password and user["status"] == "active":
+                    return user
+        except Exception as e:
+            logger.error(f"Browser token error: {e}")
+        raise HTTPException(status_code=401, detail="Invalid browser token")
+    
+    # Telegram WebApp auth
     if not x_telegram_init_data:
-        raise HTTPException(status_code=401, detail="Telegram init data required")
+        raise HTTPException(status_code=401, detail="Authentication required")
     
     user_data = validate_telegram_data(x_telegram_init_data)
     if not user_data:
@@ -95,7 +113,18 @@ async def get_current_user(x_telegram_init_data: str = Header(None)):
     if user["status"] == "blocked":
         raise HTTPException(status_code=403, detail="User blocked")
     
-    if user["status"] == "pending" and not config.is_admin(user["telegram_id"]):
+    if user["status"] == "pending" and not config.is_admin(user.get("telegram_id", 0)):
         raise HTTPException(status_code=403, detail="Account pending approval")
     
     return user
+
+
+async def get_current_user_optional(
+    x_telegram_init_data: str = Header(None),
+    x_browser_token: str = Header(None)
+):
+    """Get current user if authenticated, None otherwise."""
+    try:
+        return await get_current_user(x_telegram_init_data, x_browser_token)
+    except HTTPException:
+        return None

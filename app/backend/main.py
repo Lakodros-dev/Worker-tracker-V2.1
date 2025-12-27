@@ -1,4 +1,6 @@
 """FastAPI Backend for Attendance System."""
+import random
+import string
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -6,7 +8,7 @@ from typing import Optional, List
 from datetime import datetime
 
 from config import config
-from auth import get_current_user
+from auth import get_current_user, get_current_user_optional
 from database import db, get_settings, save_settings, USERS_FILE, REPORTS_FILE, LOCATIONS_FILE
 import services
 
@@ -49,6 +51,15 @@ class UserStatusRequest(BaseModel):
     status: str
 
 
+class BrowserRegisterRequest(BaseModel):
+    username: str
+
+
+class BrowserLoginRequest(BaseModel):
+    username: str
+    password: str
+
+
 # Health Check
 @app.get("/")
 async def root():
@@ -58,6 +69,90 @@ async def root():
 @app.get("/health")
 async def health():
     return {"status": "healthy"}
+
+
+# Browser Auth Routes
+@app.post("/auth/register")
+async def browser_register(req: BrowserRegisterRequest):
+    """Browser orqali ro'yxatdan o'tish - username bilan."""
+    username = req.username.strip().lower().replace("@", "")
+    if not username:
+        raise HTTPException(400, "Username bo'sh bo'lishi mumkin emas")
+    
+    # Mavjud foydalanuvchini tekshirish
+    existing = db.find_one(USERS_FILE, "username", username)
+    if existing:
+        if existing["status"] == "active":
+            raise HTTPException(400, "Bu username allaqachon ro'yxatdan o'tgan. Login qiling.")
+        elif existing["status"] == "pending":
+            raise HTTPException(400, "Hisobingiz tasdiqlanishini kuting")
+        elif existing["status"] == "blocked":
+            raise HTTPException(403, "Bu hisob bloklangan")
+    
+    # Yangi foydalanuvchi yaratish
+    user = {
+        "telegram_id": None,
+        "username": username,
+        "first_name": username,
+        "last_name": "",
+        "status": "pending",
+        "password": None,
+        "auth_type": "browser",
+        "created_at": datetime.now().isoformat(),
+        "updated_at": datetime.now().isoformat()
+    }
+    db.append(USERS_FILE, user)
+    
+    return {"message": "Ro'yxatdan o'tdingiz. Admin tasdiqlashini kuting.", "username": username}
+
+
+@app.post("/auth/login")
+async def browser_login(req: BrowserLoginRequest):
+    """Browser orqali kirish - username va parol bilan."""
+    username = req.username.strip().lower().replace("@", "")
+    password = req.password.strip()
+    
+    if not username or not password:
+        raise HTTPException(400, "Username va parol kiritilishi shart")
+    
+    user = db.find_one(USERS_FILE, "username", username)
+    if not user:
+        raise HTTPException(404, "Foydalanuvchi topilmadi. Avval ro'yxatdan o'ting.")
+    
+    if user["status"] == "pending":
+        raise HTTPException(403, "Hisobingiz hali tasdiqlanmagan")
+    
+    if user["status"] == "blocked":
+        raise HTTPException(403, "Hisobingiz bloklangan")
+    
+    if not user.get("password"):
+        raise HTTPException(403, "Parol hali berilmagan. Admin tasdiqlashini kuting.")
+    
+    if user["password"] != password:
+        raise HTTPException(401, "Parol noto'g'ri")
+    
+    # Session token yaratish (oddiy variant)
+    token = f"{username}:{password}"
+    
+    return {
+        "message": "Muvaffaqiyatli kirdingiz",
+        "token": token,
+        "user": {
+            "username": user["username"],
+            "first_name": user["first_name"],
+            "last_name": user.get("last_name", ""),
+            "status": user["status"],
+            "telegram_id": user.get("telegram_id")
+        }
+    }
+
+
+@app.get("/auth/check")
+async def check_auth(user=Depends(get_current_user_optional)):
+    """Auth holatini tekshirish."""
+    if user:
+        return {"authenticated": True, "user": user}
+    return {"authenticated": False}
 
 
 # User Routes
@@ -91,10 +186,62 @@ async def update_user_status(telegram_id: int, req: UserStatusRequest, user=Depe
         raise HTTPException(403, "Admin only")
     if req.status not in ["active", "blocked", "pending"]:
         raise HTTPException(400, "Invalid status")
-    success = db.update(USERS_FILE, "telegram_id", telegram_id, {"status": req.status})
-    if not success:
+    
+    target_user = db.find_one(USERS_FILE, "telegram_id", telegram_id)
+    if not target_user:
         raise HTTPException(404, "User not found")
-    return {"message": "Updated", "status": req.status}
+    
+    updates = {"status": req.status}
+    
+    # Agar tasdiqlansa va parol yo'q bo'lsa - parol generatsiya qilish
+    if req.status == "active" and not target_user.get("password"):
+        password = ''.join(random.choices(string.digits, k=5))
+        updates["password"] = password
+    
+    success = db.update(USERS_FILE, "telegram_id", telegram_id, updates)
+    if not success:
+        raise HTTPException(500, "Update failed")
+    
+    # Yangilangan foydalanuvchini qaytarish
+    updated_user = db.find_one(USERS_FILE, "telegram_id", telegram_id)
+    return {
+        "message": "Updated", 
+        "status": req.status,
+        "password": updated_user.get("password") if req.status == "active" else None,
+        "telegram_id": telegram_id
+    }
+
+
+@app.put("/users/username/{username}/status")
+async def update_user_status_by_username(username: str, req: UserStatusRequest, user=Depends(get_current_user)):
+    """Browser foydalanuvchilar uchun - username bo'yicha status yangilash."""
+    if not config.is_admin(user.get("telegram_id", 0)):
+        raise HTTPException(403, "Admin only")
+    if req.status not in ["active", "blocked", "pending"]:
+        raise HTTPException(400, "Invalid status")
+    
+    target_user = db.find_one(USERS_FILE, "username", username.lower())
+    if not target_user:
+        raise HTTPException(404, "User not found")
+    
+    updates = {"status": req.status}
+    
+    # Agar tasdiqlansa va parol yo'q bo'lsa - parol generatsiya qilish
+    if req.status == "active" and not target_user.get("password"):
+        password = ''.join(random.choices(string.digits, k=5))
+        updates["password"] = password
+    
+    success = db.update(USERS_FILE, "username", username.lower(), updates)
+    if not success:
+        raise HTTPException(500, "Update failed")
+    
+    updated_user = db.find_one(USERS_FILE, "username", username.lower())
+    return {
+        "message": "Updated", 
+        "status": req.status,
+        "password": updated_user.get("password") if req.status == "active" else None,
+        "username": username
+    }
 
 
 # Session Routes

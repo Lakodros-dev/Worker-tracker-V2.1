@@ -385,3 +385,84 @@ textarea {
 #stats-chart {
     max-height: 250px;
 }
+
+
+/* Login Screen */
+.login-container {
+    max-width: 400px;
+    margin: 0 auto;
+    padding: 40px 20px;
+    text-align: center;
+}
+
+.login-container h1 {
+    font-size: 28px;
+    margin-bottom: 8px;
+}
+
+.login-container .subtitle {
+    color: var(--hint-color);
+    margin-bottom: 32px;
+}
+
+.auth-form {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.auth-form input {
+    width: 100%;
+    padding: 14px 16px;
+    border: 1px solid var(--hint-color);
+    border-radius: 8px;
+    font-size: 16px;
+    background: var(--bg-color);
+    color: var(--text-color);
+}
+
+.auth-form input:focus {
+    outline: none;
+    border-color: var(--button-color);
+}
+
+.switch-text {
+    margin-top: 16px;
+    font-size: 14px;
+    color: var(--hint-color);
+}
+
+.switch-text a {
+    color: var(--link-color);
+    text-decoration: none;
+    font-weight: 600;
+}
+
+.auth-message {
+    margin-top: 16px;
+    padding: 12px;
+    border-radius: 8px;
+    font-size: 14px;
+}
+
+.auth-message.success {
+    background: #e8f5e9;
+    color: #2e7d32;
+}
+
+.auth-message.error {
+    background: #ffebee;
+    color: #c62828;
+}
+
+/* User item type badge */
+.user-item .type {
+    font-size: 11px;
+    color: var(--hint-color);
+    margin-top: 2px;
+}
+
+/* Logout button */
+#logout-btn {
+    margin-left: auto;
+}

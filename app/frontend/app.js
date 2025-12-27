@@ -1,30 +1,32 @@
 // Telegram WebApp
-const tg = window.Telegram.WebApp;
-tg.ready();
-tg.expand();
+const tg = window.Telegram?.WebApp;
+const isTelegramWebApp = tg && tg.initData && tg.initData.length > 0;
 
-// Debug - ekranda ko'rsatish
-const debugDiv = document.createElement('div');
-debugDiv.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#000;color:#0f0;padding:10px;font-size:12px;z-index:9999;max-height:200px;overflow:auto;';
-debugDiv.innerHTML = `
-<b>DEBUG:</b><br>
-initData: ${tg.initData ? tg.initData.substring(0, 100) + '...' : 'BO\'SH!'}<br>
-user: ${JSON.stringify(tg.initDataUnsafe?.user || 'YO\'Q')}
-`;
-document.body.appendChild(debugDiv);
+if (isTelegramWebApp) {
+    tg.ready();
+    tg.expand();
+}
 
 // State
 let currentUser = null;
 let isAdmin = false;
 let statsChart = null;
+let authToken = localStorage.getItem('authToken');
+let authType = isTelegramWebApp ? 'telegram' : 'browser';
 
 // API Helper
 async function api(endpoint, options = {}) {
     const url = `${API_URL}${endpoint}`;
     const headers = {
-        'Content-Type': 'application/json',
-        'X-Telegram-Init-Data': tg.initData
+        'Content-Type': 'application/json'
     };
+
+    // Auth header
+    if (isTelegramWebApp) {
+        headers['X-Telegram-Init-Data'] = tg.initData;
+    } else if (authToken) {
+        headers['X-Browser-Token'] = authToken;
+    }
 
     try {
         const response = await fetch(url, { ...options, headers });
@@ -50,6 +52,13 @@ function showError(message) {
     showScreen('error-screen');
 }
 
+function showAuthMessage(message, isError = false) {
+    const msgEl = document.getElementById('auth-message');
+    msgEl.textContent = message;
+    msgEl.className = `auth-message ${isError ? 'error' : 'success'}`;
+    msgEl.classList.remove('hidden');
+}
+
 // Tab Management
 document.querySelectorAll('.tab').forEach(tab => {
     tab.addEventListener('click', () => {
@@ -61,11 +70,120 @@ document.querySelectorAll('.tab').forEach(tab => {
     });
 });
 
+// Browser Auth
+document.getElementById('show-register')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    document.getElementById('login-form').classList.add('hidden');
+    document.getElementById('register-form').classList.remove('hidden');
+    document.getElementById('auth-message').classList.add('hidden');
+});
+
+document.getElementById('show-login')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    document.getElementById('register-form').classList.add('hidden');
+    document.getElementById('login-form').classList.remove('hidden');
+    document.getElementById('auth-message').classList.add('hidden');
+});
+
+document.getElementById('register-btn')?.addEventListener('click', async () => {
+    const username = document.getElementById('register-username').value.trim();
+    if (!username) {
+        showAuthMessage('Username kiriting', true);
+        return;
+    }
+
+    try {
+        const result = await fetch(`${API_URL}/auth/register`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username })
+        });
+        const data = await result.json();
+
+        if (!result.ok) {
+            showAuthMessage(data.detail || 'Xatolik', true);
+            return;
+        }
+
+        showAuthMessage('✅ ' + data.message);
+        document.getElementById('register-username').value = '';
+    } catch (error) {
+        showAuthMessage(error.message, true);
+    }
+});
+
+document.getElementById('login-btn')?.addEventListener('click', async () => {
+    const username = document.getElementById('login-username').value.trim();
+    const password = document.getElementById('login-password').value.trim();
+
+    if (!username || !password) {
+        showAuthMessage('Username va parol kiriting', true);
+        return;
+    }
+
+    try {
+        const result = await fetch(`${API_URL}/auth/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password })
+        });
+        const data = await result.json();
+
+        if (!result.ok) {
+            showAuthMessage(data.detail || 'Xatolik', true);
+            return;
+        }
+
+        // Token saqlash
+        authToken = data.token;
+        localStorage.setItem('authToken', authToken);
+        currentUser = data.user;
+
+        // App ga o'tish
+        await initMainApp();
+    } catch (error) {
+        showAuthMessage(error.message, true);
+    }
+});
+
+// Logout
+function logout() {
+    localStorage.removeItem('authToken');
+    authToken = null;
+    currentUser = null;
+    showScreen('login-screen');
+}
+
 // Initialize App
 async function init() {
+    if (isTelegramWebApp) {
+        // Telegram WebApp - to'g'ridan-to'g'ri init
+        await initMainApp();
+    } else {
+        // Browser - auth tekshirish
+        if (authToken) {
+            try {
+                const check = await api('/auth/check');
+                if (check.authenticated) {
+                    currentUser = check.user;
+                    await initMainApp();
+                    return;
+                }
+            } catch (e) {
+                localStorage.removeItem('authToken');
+                authToken = null;
+            }
+        }
+        showScreen('login-screen');
+    }
+}
+
+async function initMainApp() {
     try {
         // Get current user
-        currentUser = await api('/users/me');
+        if (!currentUser) {
+            currentUser = await api('/users/me');
+        }
 
         // Check admin status
         const adminCheck = await api('/users/is-admin');
@@ -83,6 +201,11 @@ async function init() {
             loadAdminData();
         }
 
+        // Browser uchun logout tugmasi
+        if (!isTelegramWebApp) {
+            addLogoutButton();
+        }
+
         // Load initial data
         await loadDashboard();
         await loadReportHistory();
@@ -90,19 +213,35 @@ async function init() {
 
         showScreen('main-app');
     } catch (error) {
-        debugDiv.innerHTML += `<br><b style="color:red">ERROR: ${error.message}</b>`;
-        showError(error.message);
+        console.error('Init error:', error);
+        if (!isTelegramWebApp) {
+            localStorage.removeItem('authToken');
+            showScreen('login-screen');
+            showAuthMessage(error.message, true);
+        } else {
+            showError(error.message);
+        }
+    }
+}
+
+function addLogoutButton() {
+    const header = document.querySelector('header');
+    if (!document.getElementById('logout-btn')) {
+        const btn = document.createElement('button');
+        btn.id = 'logout-btn';
+        btn.className = 'btn small danger';
+        btn.textContent = '🚪 Chiqish';
+        btn.onclick = logout;
+        header.appendChild(btn);
     }
 }
 
 // Dashboard
 async function loadDashboard() {
     try {
-        // Load session
         const sessionData = await api('/sessions/today');
         updateSessionUI(sessionData.session);
 
-        // Load report status
         const reportStatus = await api('/reports/status');
         document.getElementById('report-status').innerHTML = reportStatus.submitted
             ? '<p>✅ Hisobot topshirilgan</p>'
@@ -145,9 +284,9 @@ document.getElementById('start-session-btn').addEventListener('click', async () 
     try {
         const session = await api('/sessions/start', { method: 'POST' });
         updateSessionUI(session);
-        tg.showAlert('✅ Sessiya boshlandi!');
+        showAlert('✅ Sessiya boshlandi!');
     } catch (error) {
-        tg.showAlert(error.message);
+        showAlert(error.message);
     }
 });
 
@@ -155,16 +294,25 @@ document.getElementById('end-session-btn').addEventListener('click', async () =>
     try {
         const session = await api('/sessions/end', { method: 'POST' });
         updateSessionUI(session);
-        tg.showAlert('✅ Sessiya tugatildi!');
+        showAlert('✅ Sessiya tugatildi!');
     } catch (error) {
-        tg.showAlert(error.message);
+        showAlert(error.message);
     }
 });
+
+// Alert helper
+function showAlert(message) {
+    if (isTelegramWebApp && tg.showAlert) {
+        tg.showAlert(message);
+    } else {
+        alert(message);
+    }
+}
 
 // Location
 document.getElementById('send-location-btn').addEventListener('click', () => {
     if (!navigator.geolocation) {
-        tg.showAlert('Geolokatsiya qo\'llab-quvvatlanmaydi');
+        showAlert('Geolokatsiya qo\'llab-quvvatlanmaydi');
         return;
     }
 
@@ -180,21 +328,19 @@ document.getElementById('send-location-btn').addEventListener('click', () => {
                 });
 
                 if (result.recorded === false) {
-                    tg.showAlert(result.message);
+                    showAlert(result.message);
                 } else {
                     document.getElementById('location-status').innerHTML = `
                         <p>📍 ${result.is_inside_office ? '🏢 Ofisda' : '🚶 Ofis tashqarisida'}</p>
                         <p>Vaqt: ${new Date(result.timestamp).toLocaleTimeString()}</p>
                     `;
-                    tg.showAlert('✅ Joylashuv saqlandi!');
+                    showAlert('✅ Joylashuv saqlandi!');
                 }
             } catch (error) {
-                tg.showAlert(error.message);
+                showAlert(error.message);
             }
         },
-        (error) => {
-            tg.showAlert('Joylashuvni aniqlab bo\'lmadi');
-        }
+        () => showAlert('Joylashuvni aniqlab bo\'lmadi')
     );
 });
 
@@ -202,7 +348,7 @@ document.getElementById('send-location-btn').addEventListener('click', () => {
 document.getElementById('submit-report-btn').addEventListener('click', async () => {
     const content = document.getElementById('report-content').value.trim();
     if (!content) {
-        tg.showAlert('Hisobot bo\'sh bo\'lishi mumkin emas');
+        showAlert('Hisobot bo\'sh bo\'lishi mumkin emas');
         return;
     }
 
@@ -211,12 +357,12 @@ document.getElementById('submit-report-btn').addEventListener('click', async () 
             method: 'POST',
             body: JSON.stringify({ content })
         });
-        tg.showAlert('✅ Hisobot topshirildi!');
+        showAlert('✅ Hisobot topshirildi!');
         document.getElementById('report-content').value = '';
         loadReportHistory();
         loadDashboard();
     } catch (error) {
-        tg.showAlert(error.message);
+        showAlert(error.message);
     }
 });
 
@@ -262,86 +408,50 @@ async function loadStatistics() {
     const endDate = document.getElementById('stat-end-date').value;
 
     if (!startDate || !endDate) {
-        tg.showAlert('Sanalarni tanlang');
+        showAlert('Sanalarni tanlang');
         return;
     }
 
     try {
-        // Load summary
         const stats = await api('/statistics/me', {
             method: 'POST',
             body: JSON.stringify({ start_date: startDate, end_date: endDate })
         });
 
         document.getElementById('stats-summary').innerHTML = `
-            <div class="stat-item">
-                <div class="value">${stats.total_days}</div>
-                <div class="label">Kunlar</div>
-            </div>
-            <div class="stat-item">
-                <div class="value">${Math.round(stats.total_online_minutes / 60)}</div>
-                <div class="label">Onlayn (soat)</div>
-            </div>
-            <div class="stat-item">
-                <div class="value">${Math.round(stats.total_office_minutes / 60)}</div>
-                <div class="label">Ofisda (soat)</div>
-            </div>
-            <div class="stat-item">
-                <div class="value">${stats.total_late_minutes}</div>
-                <div class="label">Kechikish (daq)</div>
-            </div>
-            <div class="stat-item">
-                <div class="value">${Math.round(stats.attendance_rate)}%</div>
-                <div class="label">Davomat</div>
-            </div>
-            <div class="stat-item">
-                <div class="value">${stats.total_early_leave_minutes}</div>
-                <div class="label">Erta ketish (daq)</div>
-            </div>
+            <div class="stat-item"><div class="value">${stats.total_days}</div><div class="label">Kunlar</div></div>
+            <div class="stat-item"><div class="value">${Math.round(stats.total_online_minutes / 60)}</div><div class="label">Onlayn (soat)</div></div>
+            <div class="stat-item"><div class="value">${Math.round(stats.total_office_minutes / 60)}</div><div class="label">Ofisda (soat)</div></div>
+            <div class="stat-item"><div class="value">${stats.total_late_minutes}</div><div class="label">Kechikish (daq)</div></div>
+            <div class="stat-item"><div class="value">${Math.round(stats.attendance_rate)}%</div><div class="label">Davomat</div></div>
+            <div class="stat-item"><div class="value">${stats.total_early_leave_minutes}</div><div class="label">Erta ketish (daq)</div></div>
         `;
 
-        // Load chart
         const chartData = await api('/statistics/chart/me', {
             method: 'POST',
             body: JSON.stringify({ start_date: startDate, end_date: endDate })
         });
-
         renderChart(chartData);
     } catch (error) {
-        tg.showAlert(error.message);
+        showAlert(error.message);
     }
 }
 
 function renderChart(data) {
     const ctx = document.getElementById('stats-chart').getContext('2d');
-
-    if (statsChart) {
-        statsChart.destroy();
-    }
+    if (statsChart) statsChart.destroy();
 
     statsChart = new Chart(ctx, {
         type: 'line',
         data: {
             labels: data.labels,
-            datasets: data.datasets.map(ds => ({
-                ...ds,
-                fill: false,
-                tension: 0.1
-            }))
+            datasets: data.datasets.map(ds => ({ ...ds, fill: false, tension: 0.1 }))
         },
         options: {
             responsive: true,
             maintainAspectRatio: false,
-            plugins: {
-                legend: {
-                    position: 'bottom',
-                    labels: { boxWidth: 12, font: { size: 10 } }
-                }
-            },
-            scales: {
-                x: { ticks: { font: { size: 10 } } },
-                y: { beginAtZero: true, ticks: { font: { size: 10 } } }
-            }
+            plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 10 } } } },
+            scales: { x: { ticks: { font: { size: 10 } } }, y: { beginAtZero: true, ticks: { font: { size: 10 } } } }
         }
     });
 }
@@ -349,7 +459,6 @@ function renderChart(data) {
 // Admin Functions
 async function loadAdminData() {
     try {
-        // Load settings
         const settings = await api('/settings');
         document.getElementById('work-start').value = settings.work_start;
         document.getElementById('work-end').value = settings.work_end;
@@ -362,7 +471,6 @@ async function loadAdminData() {
             document.getElementById('geo-radius').value = settings.geofence.radius_meters;
         }
 
-        // Load pending users
         loadPendingUsers();
     } catch (error) {
         console.error('Admin data error:', error);
@@ -381,10 +489,11 @@ async function loadPendingUsers() {
 
         container.innerHTML = users.map(u => `
             <div class="user-item">
-                <div class="name">${u.first_name} ${u.last_name || ''}</div>
+                <div class="name">${u.first_name} ${u.last_name || ''} ${u.username ? `(@${u.username})` : ''}</div>
+                <div class="type">${u.auth_type === 'browser' ? '🌐 Browser' : '📱 Telegram'}</div>
                 <div class="actions">
-                    <button class="approve" onclick="approveUser(${u.telegram_id})">✅</button>
-                    <button class="block" onclick="blockUser(${u.telegram_id})">⛔</button>
+                    <button class="approve" onclick="approveUser('${u.telegram_id || u.username}', ${u.telegram_id ? 'true' : 'false'})">✅</button>
+                    <button class="block" onclick="blockUser('${u.telegram_id || u.username}', ${u.telegram_id ? 'true' : 'false'})">⛔</button>
                 </div>
             </div>
         `).join('');
@@ -393,33 +502,40 @@ async function loadPendingUsers() {
     }
 }
 
-async function approveUser(userId) {
+async function approveUser(id, isTelegramId) {
     try {
-        await api(`/users/${userId}/status`, {
+        const endpoint = isTelegramId ? `/users/${id}/status` : `/users/username/${id}/status`;
+        const result = await api(endpoint, {
             method: 'PUT',
             body: JSON.stringify({ status: 'active' })
         });
-        tg.showAlert('✅ Tasdiqlandi');
+
+        if (result.password) {
+            showAlert(`✅ Tasdiqlandi!\n\nParol: ${result.password}\n\nBu parolni foydalanuvchiga yuboring.`);
+        } else {
+            showAlert('✅ Tasdiqlandi');
+        }
         loadPendingUsers();
     } catch (error) {
-        tg.showAlert(error.message);
+        showAlert(error.message);
     }
 }
 
-async function blockUser(userId) {
+async function blockUser(id, isTelegramId) {
     try {
-        await api(`/users/${userId}/status`, {
+        const endpoint = isTelegramId ? `/users/${id}/status` : `/users/username/${id}/status`;
+        await api(endpoint, {
             method: 'PUT',
             body: JSON.stringify({ status: 'blocked' })
         });
-        tg.showAlert('⛔ Bloklandi');
+        showAlert('⛔ Bloklandi');
         loadPendingUsers();
     } catch (error) {
-        tg.showAlert(error.message);
+        showAlert(error.message);
     }
 }
 
-// Save Settings
+// Settings
 document.getElementById('save-settings-btn').addEventListener('click', async () => {
     try {
         await api('/settings', {
@@ -431,9 +547,9 @@ document.getElementById('save-settings-btn').addEventListener('click', async () 
                 lunch_end: document.getElementById('lunch-end').value
             })
         });
-        tg.showAlert('✅ Saqlandi');
+        showAlert('✅ Saqlandi');
     } catch (error) {
-        tg.showAlert(error.message);
+        showAlert(error.message);
     }
 });
 
@@ -449,19 +565,18 @@ document.getElementById('save-geofence-btn').addEventListener('click', async () 
                 }
             })
         });
-        tg.showAlert('✅ Saqlandi');
+        showAlert('✅ Saqlandi');
     } catch (error) {
-        tg.showAlert(error.message);
+        showAlert(error.message);
     }
 });
 
-// Load All Users Stats
 document.getElementById('load-all-stats-btn').addEventListener('click', async () => {
     const startDate = document.getElementById('admin-stat-start').value;
     const endDate = document.getElementById('admin-stat-end').value;
 
     if (!startDate || !endDate) {
-        tg.showAlert('Sanalarni tanlang');
+        showAlert('Sanalarni tanlang');
         return;
     }
 
@@ -471,8 +586,7 @@ document.getElementById('load-all-stats-btn').addEventListener('click', async ()
             body: JSON.stringify({ start_date: startDate, end_date: endDate })
         });
 
-        const container = document.getElementById('all-users-stats');
-        container.innerHTML = data.map(item => `
+        document.getElementById('all-users-stats').innerHTML = data.map(item => `
             <div class="user-stat-item">
                 <div class="name">${item.user.first_name} ${item.user.last_name || ''}</div>
                 <div class="stats">
@@ -484,7 +598,7 @@ document.getElementById('load-all-stats-btn').addEventListener('click', async ()
             </div>
         `).join('');
     } catch (error) {
-        tg.showAlert(error.message);
+        showAlert(error.message);
     }
 });
 

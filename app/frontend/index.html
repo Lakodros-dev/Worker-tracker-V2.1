@@ -18,6 +18,29 @@
             <p>Yuklanmoqda...</p>
         </div>
 
+        <!-- Login Screen (Browser) -->
+        <div id="login-screen" class="screen">
+            <div class="login-container">
+                <h1>🏢 Davomat Tizimi</h1>
+                <p class="subtitle">Tizimga kirish</p>
+
+                <div id="login-form" class="auth-form">
+                    <input type="text" id="login-username" placeholder="Telegram username (@ siz)">
+                    <input type="password" id="login-password" placeholder="5 raqamli parol">
+                    <button id="login-btn" class="btn primary">🔐 Kirish</button>
+                    <p class="switch-text">Hisobingiz yo'qmi? <a href="#" id="show-register">Ro'yxatdan o'ting</a></p>
+                </div>
+
+                <div id="register-form" class="auth-form hidden">
+                    <input type="text" id="register-username" placeholder="Telegram username (@ siz)">
+                    <button id="register-btn" class="btn primary">📝 Ro'yxatdan o'tish</button>
+                    <p class="switch-text">Hisobingiz bormi? <a href="#" id="show-login">Kirish</a></p>
+                </div>
+
+                <div id="auth-message" class="auth-message hidden"></div>
+            </div>
+        </div>
+
         <!-- Error -->
         <div id="error-screen" class="screen">
             <div class="error-icon">⚠️</div>
