@@ -11,14 +11,15 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 USERS_FILE = "users.json"
+USERS_PER_PAGE = 10
 
 
-def get_user(telegram_id: int):
-    return db.find_one(USERS_FILE, "telegram_id", telegram_id)
+async def get_user(telegram_id: int):
+    return await db.find_one(USERS_FILE, "telegram_id", telegram_id)
 
 
-def create_user(telegram_id: int, username: str, first_name: str, last_name: str):
-    # Admin avtomatik active bo'ladi
+async def create_user(telegram_id: int, username: str, first_name: str, last_name: str):
+    """Create new user with pending status (admin is auto-active)."""
     status = "active" if config.is_admin(telegram_id) else "pending"
     user = {
         "telegram_id": telegram_id,
@@ -26,31 +27,52 @@ def create_user(telegram_id: int, username: str, first_name: str, last_name: str
         "first_name": first_name,
         "last_name": last_name,
         "status": status,
-        "created_at": datetime.now().isoformat()
+        "created_at": datetime.now().isoformat(),
+        "updated_at": datetime.now().isoformat()
     }
-    db.append(USERS_FILE, user)
-    return user
+    success = await db.append(USERS_FILE, user)
+    return user if success else None
 
 
-def update_user_status(telegram_id: int, status: str):
-    return db.update(USERS_FILE, "telegram_id", telegram_id, {"status": status})
+async def update_user(telegram_id: int, updates: dict):
+    """Update user data."""
+    updates["updated_at"] = datetime.now().isoformat()
+    return await db.update(USERS_FILE, "telegram_id", telegram_id, updates)
 
 
-def get_users_by_status(status: str):
-    return db.find_many(USERS_FILE, {"status": status})
+async def get_users_by_status(status: str):
+    return await db.find_many(USERS_FILE, {"status": status})
 
 
-def get_all_users():
-    return db.read(USERS_FILE)
+async def get_all_users():
+    return await db.read(USERS_FILE)
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /start command."""
     user = update.effective_user
-    db_user = get_user(user.id)
+    db_user = await get_user(user.id)
+    
+    # Update existing user info if changed
+    if db_user:
+        needs_update = (
+            db_user.get("username") != (user.username or "") or
+            db_user.get("first_name") != user.first_name or
+            db_user.get("last_name") != (user.last_name or "")
+        )
+        if needs_update:
+            await update_user(user.id, {
+                "username": user.username or "",
+                "first_name": user.first_name,
+                "last_name": user.last_name or ""
+            })
     
     if not db_user:
-        db_user = create_user(user.id, user.username or "", user.first_name, user.last_name or "")
+        db_user = await create_user(user.id, user.username or "", user.first_name, user.last_name or "")
+        if not db_user:
+            await update.message.reply_text("❌ Xatolik yuz berdi. Qayta urinib ko'ring.")
+            return
+        
         await update.message.reply_text(
             f"Salom, {user.first_name}! 👋\n\n"
             "Siz tizimga muvaffaqiyatli ro'yxatdan o'tdingiz.\n"
@@ -111,7 +133,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /status command."""
     user_id = update.effective_user.id
-    db_user = get_user(user_id)
+    db_user = await get_user(user_id)
     
     if not db_user:
         await update.message.reply_text("❌ Avval /start buyrug'ini yuboring.")
@@ -136,40 +158,58 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⛔ Bu buyruq faqat adminlar uchun.")
         return
     
-    pending = get_users_by_status("pending")
-    active = get_users_by_status("active")
+    await show_admin_panel(update.message)
+
+
+async def show_admin_panel(message, edit: bool = False):
+    """Show admin panel with user counts."""
+    pending = await get_users_by_status("pending")
+    active = await get_users_by_status("active")
+    blocked = await get_users_by_status("blocked")
     
     keyboard = [
-        [InlineKeyboardButton(f"👥 Kutilayotgan ({len(pending)})", callback_data="admin_pending")],
-        [InlineKeyboardButton(f"✅ Faol ({len(active)})", callback_data="admin_active")],
+        [InlineKeyboardButton(f"👥 Kutilayotgan ({len(pending)})", callback_data="admin_pending_0")],
+        [InlineKeyboardButton(f"✅ Faol ({len(active)})", callback_data="admin_active_0")],
+        [InlineKeyboardButton(f"⛔ Bloklangan ({len(blocked)})", callback_data="admin_blocked_0")],
     ]
     
-    await update.message.reply_text(
-        "🔐 *Admin Panel*",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="Markdown"
-    )
+    text = "🔐 *Admin Panel*"
+    
+    if edit:
+        await message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    else:
+        await message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
 
 async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle location updates."""
     user_id = update.effective_user.id
     location = update.message.location
-    db_user = get_user(user_id)
+    db_user = await get_user(user_id)
     
-    if not db_user or db_user["status"] != "active":
+    if not db_user:
+        await update.message.reply_text("❌ Avval /start buyrug'ini yuboring.")
+        return
+    
+    if db_user["status"] != "active":
         await update.message.reply_text("⛔ Hisobingiz faol emas.")
         return
     
     if location.live_period:
+        hours = location.live_period // 3600
+        minutes = (location.live_period % 3600) // 60
+        duration = f"{hours} soat" if hours else f"{minutes} daqiqa"
+        
         await update.message.reply_text(
             f"✅ Jonli joylashuv qabul qilindi!\n"
-            f"Davomiyligi: {location.live_period // 3600} soat\n\n"
+            f"📍 Koordinatalar: {location.latitude:.6f}, {location.longitude:.6f}\n"
+            f"⏱ Davomiyligi: {duration}\n\n"
             f"📱 Mini App orqali to'liq ma'lumotlarni ko'ring."
         )
     else:
         await update.message.reply_text(
-            "📍 Joylashuv qabul qilindi.\n\n"
+            f"📍 Joylashuv qabul qilindi.\n"
+            f"Koordinatalar: {location.latitude:.6f}, {location.longitude:.6f}\n\n"
             "💡 Uzluksiz kuzatuv uchun 8 soatlik jonli joylashuvni yuboring."
         )
 
@@ -186,58 +226,186 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     data = query.data
     
-    if data == "admin_pending":
-        users = get_users_by_status("pending")
-        if not users:
-            await query.edit_message_text("✅ Kutilayotgan foydalanuvchilar yo'q")
-            return
-        
-        keyboard = []
-        for u in users[:10]:
-            name = f"{u['first_name']} {u.get('last_name', '')}".strip()
-            keyboard.append([
-                InlineKeyboardButton(f"👤 {name}", callback_data=f"info_{u['telegram_id']}"),
-                InlineKeyboardButton("✅", callback_data=f"approve_{u['telegram_id']}"),
-                InlineKeyboardButton("⛔", callback_data=f"block_{u['telegram_id']}")
-            ])
-        keyboard.append([InlineKeyboardButton("🔙 Orqaga", callback_data="admin_back")])
-        
-        await query.edit_message_text(
-            "👥 *Kutilayotgan:*",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="Markdown"
-        )
+    # Parse callback data
+    if data.startswith("admin_pending_"):
+        page = int(data.split("_")[2])
+        await show_pending_users(query, page)
     
-    elif data == "admin_active":
-        users = get_users_by_status("active")
-        text = "✅ *Faol foydalanuvchilar:*\n\n"
-        for u in users[:20]:
-            name = f"{u['first_name']} {u.get('last_name', '')}".strip()
-            text += f"• {name} (@{u.get('username') or 'N/A'})\n"
-        
-        keyboard = [[InlineKeyboardButton("🔙 Orqaga", callback_data="admin_back")]]
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    elif data.startswith("admin_active_"):
+        page = int(data.split("_")[2])
+        await show_users_list(query, "active", page)
+    
+    elif data.startswith("admin_blocked_"):
+        page = int(data.split("_")[2])
+        await show_users_list(query, "blocked", page)
     
     elif data == "admin_back":
-        pending = get_users_by_status("pending")
-        active = get_users_by_status("active")
-        keyboard = [
-            [InlineKeyboardButton(f"👥 Kutilayotgan ({len(pending)})", callback_data="admin_pending")],
-            [InlineKeyboardButton(f"✅ Faol ({len(active)})", callback_data="admin_active")],
-        ]
-        await query.edit_message_text("🔐 *Admin Panel*", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        await show_admin_panel(query.message, edit=True)
     
     elif data.startswith("approve_"):
         target_id = int(data.split("_")[1])
-        update_user_status(target_id, "active")
-        await query.answer("✅ Tasdiqlandi")
+        await update_user(target_id, {"status": "active"})
+        await query.answer("✅ Tasdiqlandi", show_alert=True)
         # Refresh pending list
-        await handle_callback(update, context)
+        await show_pending_users(query, 0)
     
     elif data.startswith("block_"):
         target_id = int(data.split("_")[1])
-        update_user_status(target_id, "blocked")
-        await query.answer("⛔ Bloklandi")
+        await update_user(target_id, {"status": "blocked"})
+        await query.answer("⛔ Bloklandi", show_alert=True)
+        await show_pending_users(query, 0)
+    
+    elif data.startswith("unblock_"):
+        target_id = int(data.split("_")[1])
+        await update_user(target_id, {"status": "active"})
+        await query.answer("✅ Blokdan chiqarildi", show_alert=True)
+        await show_users_list(query, "blocked", 0)
+    
+    elif data.startswith("info_"):
+        target_id = int(data.split("_")[1])
+        await show_user_info(query, target_id)
+
+
+async def show_pending_users(query, page: int):
+    """Show pending users with pagination."""
+    users = await get_users_by_status("pending")
+    
+    if not users:
+        keyboard = [[InlineKeyboardButton("🔙 Orqaga", callback_data="admin_back")]]
+        await query.edit_message_text(
+            "✅ Kutilayotgan foydalanuvchilar yo'q",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return
+    
+    total_pages = (len(users) + USERS_PER_PAGE - 1) // USERS_PER_PAGE
+    page = max(0, min(page, total_pages - 1))
+    start = page * USERS_PER_PAGE
+    end = start + USERS_PER_PAGE
+    page_users = users[start:end]
+    
+    keyboard = []
+    for u in page_users:
+        name = f"{u['first_name']} {u.get('last_name', '')}".strip()
+        keyboard.append([
+            InlineKeyboardButton(f"👤 {name[:20]}", callback_data=f"info_{u['telegram_id']}"),
+            InlineKeyboardButton("✅", callback_data=f"approve_{u['telegram_id']}"),
+            InlineKeyboardButton("⛔", callback_data=f"block_{u['telegram_id']}")
+        ])
+    
+    # Pagination buttons
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton("⬅️", callback_data=f"admin_pending_{page-1}"))
+    nav_buttons.append(InlineKeyboardButton(f"{page+1}/{total_pages}", callback_data="noop"))
+    if page < total_pages - 1:
+        nav_buttons.append(InlineKeyboardButton("➡️", callback_data=f"admin_pending_{page+1}"))
+    
+    if nav_buttons:
+        keyboard.append(nav_buttons)
+    
+    keyboard.append([InlineKeyboardButton("🔙 Orqaga", callback_data="admin_back")])
+    
+    await query.edit_message_text(
+        f"👥 *Kutilayotgan foydalanuvchilar:* ({len(users)} ta)",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown"
+    )
+
+
+async def show_users_list(query, status: str, page: int):
+    """Show users list with pagination."""
+    users = await get_users_by_status(status)
+    status_titles = {"active": "✅ Faol", "blocked": "⛔ Bloklangan"}
+    
+    if not users:
+        keyboard = [[InlineKeyboardButton("🔙 Orqaga", callback_data="admin_back")]]
+        await query.edit_message_text(
+            f"{status_titles.get(status, status)} foydalanuvchilar yo'q",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return
+    
+    total_pages = (len(users) + USERS_PER_PAGE - 1) // USERS_PER_PAGE
+    page = max(0, min(page, total_pages - 1))
+    start = page * USERS_PER_PAGE
+    end = start + USERS_PER_PAGE
+    page_users = users[start:end]
+    
+    text = f"{status_titles.get(status, status)} *foydalanuvchilar:* ({len(users)} ta)\n\n"
+    
+    keyboard = []
+    for u in page_users:
+        name = f"{u['first_name']} {u.get('last_name', '')}".strip()
+        username = f"@{u.get('username')}" if u.get('username') else "N/A"
+        text += f"• {name} ({username})\n"
+        
+        if status == "blocked":
+            keyboard.append([
+                InlineKeyboardButton(f"👤 {name[:15]}", callback_data=f"info_{u['telegram_id']}"),
+                InlineKeyboardButton("🔓 Ochish", callback_data=f"unblock_{u['telegram_id']}")
+            ])
+    
+    # Pagination
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton("⬅️", callback_data=f"admin_{status}_{page-1}"))
+    if total_pages > 1:
+        nav_buttons.append(InlineKeyboardButton(f"{page+1}/{total_pages}", callback_data="noop"))
+    if page < total_pages - 1:
+        nav_buttons.append(InlineKeyboardButton("➡️", callback_data=f"admin_{status}_{page+1}"))
+    
+    if nav_buttons:
+        keyboard.append(nav_buttons)
+    
+    keyboard.append([InlineKeyboardButton("🔙 Orqaga", callback_data="admin_back")])
+    
+    await query.edit_message_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown"
+    )
+
+
+async def show_user_info(query, telegram_id: int):
+    """Show detailed user info."""
+    user = await get_user(telegram_id)
+    
+    if not user:
+        await query.answer("Foydalanuvchi topilmadi", show_alert=True)
+        return
+    
+    status_emoji = {"pending": "⏳", "active": "✅", "blocked": "⛔"}
+    name = f"{user['first_name']} {user.get('last_name', '')}".strip()
+    username = f"@{user.get('username')}" if user.get('username') else "N/A"
+    
+    text = (
+        f"👤 *Foydalanuvchi ma'lumotlari*\n\n"
+        f"📛 Ism: {name}\n"
+        f"🔗 Username: {username}\n"
+        f"🆔 ID: `{telegram_id}`\n"
+        f"📌 Status: {status_emoji.get(user['status'], '❓')} {user['status']}\n"
+        f"📅 Ro'yxatdan o'tgan: {user.get('created_at', 'N/A')[:10]}"
+    )
+    
+    keyboard = []
+    if user['status'] == "pending":
+        keyboard.append([
+            InlineKeyboardButton("✅ Tasdiqlash", callback_data=f"approve_{telegram_id}"),
+            InlineKeyboardButton("⛔ Bloklash", callback_data=f"block_{telegram_id}")
+        ])
+    elif user['status'] == "active":
+        keyboard.append([InlineKeyboardButton("⛔ Bloklash", callback_data=f"block_{telegram_id}")])
+    elif user['status'] == "blocked":
+        keyboard.append([InlineKeyboardButton("🔓 Blokdan chiqarish", callback_data=f"unblock_{telegram_id}")])
+    
+    keyboard.append([InlineKeyboardButton("🔙 Orqaga", callback_data="admin_back")])
+    
+    await query.edit_message_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown"
+    )
 
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -253,21 +421,29 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     """Run the bot."""
     if not config.BOT_TOKEN:
-        logger.error("BOT_TOKEN is required!")
+        logger.error("BOT_TOKEN is required! Set it in .env file")
         return
+    
+    if not config.ADMIN_IDS:
+        logger.warning("No ADMIN_IDS configured. Admin features will be unavailable.")
     
     app = Application.builder().token(config.BOT_TOKEN).build()
     
+    # Command handlers
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("status", status_command))
     app.add_handler(CommandHandler("admin", admin_command))
+    
+    # Message handlers
     app.add_handler(MessageHandler(filters.LOCATION, handle_location))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    
+    # Callback handler
     app.add_handler(CallbackQueryHandler(handle_callback))
     
     logger.info("Bot ishga tushdi...")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
 
 if __name__ == "__main__":
