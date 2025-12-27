@@ -17,6 +17,8 @@ let authType = isTelegramWebApp ? 'telegram' : 'browser';
 // API Helper
 async function api(endpoint, options = {}) {
     const url = `${API_URL}${endpoint}`;
+    console.log('API call:', url);
+
     const headers = {
         'Content-Type': 'application/json'
     };
@@ -24,17 +26,25 @@ async function api(endpoint, options = {}) {
     // Auth header
     if (isTelegramWebApp) {
         headers['X-Telegram-Init-Data'] = tg.initData;
+        console.log('Using Telegram auth');
     } else if (authToken) {
         headers['X-Browser-Token'] = authToken;
+        console.log('Using browser token');
     }
 
     try {
+        console.log('Fetching...', { url, options, headers });
         const response = await fetch(url, { ...options, headers });
+        console.log('Response status:', response.status);
+
         if (!response.ok) {
             const error = await response.json();
+            console.error('API error response:', error);
             throw new Error(error.detail || 'Xatolik yuz berdi');
         }
-        return await response.json();
+        const data = await response.json();
+        console.log('API response:', data);
+        return data;
     } catch (error) {
         console.error('API Error:', error);
         throw error;
@@ -156,20 +166,27 @@ function logout() {
 
 // Initialize App
 async function init() {
+    console.log('Init started, isTelegramWebApp:', isTelegramWebApp);
+
     if (isTelegramWebApp) {
         // Telegram WebApp - to'g'ridan-to'g'ri init
+        console.log('Telegram WebApp detected, calling initMainApp...');
         await initMainApp();
     } else {
         // Browser - auth tekshirish
+        console.log('Browser mode, checking auth token...');
         if (authToken) {
             try {
+                console.log('Auth token found, checking...');
                 const check = await api('/auth/check');
+                console.log('Auth check result:', check);
                 if (check.authenticated) {
                     currentUser = check.user;
                     await initMainApp();
                     return;
                 }
             } catch (e) {
+                console.error('Auth check error:', e);
                 localStorage.removeItem('authToken');
                 authToken = null;
             }
@@ -179,14 +196,19 @@ async function init() {
 }
 
 async function initMainApp() {
+    console.log('initMainApp started...');
     try {
         // Get current user
         if (!currentUser) {
+            console.log('Fetching current user...');
             currentUser = await api('/users/me');
+            console.log('Current user:', currentUser);
         }
 
         // Check admin status
+        console.log('Checking admin status...');
         const adminCheck = await api('/users/is-admin');
+        console.log('Admin check:', adminCheck);
         isAdmin = adminCheck.is_admin;
 
         // Update UI
@@ -603,4 +625,8 @@ document.getElementById('load-all-stats-btn').addEventListener('click', async ()
 });
 
 // Start App
-init();
+console.log('App.js loaded, API_URL:', API_URL);
+init().catch(err => {
+    console.error('Init failed:', err);
+    showError(err.message);
+});
