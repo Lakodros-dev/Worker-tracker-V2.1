@@ -163,26 +163,26 @@ async def get_me(user=Depends(get_current_user)):
 
 @app.get("/users/is-admin")
 async def check_admin(user=Depends(get_current_user)):
-    return {"is_admin": config.is_admin(user["telegram_id"])}
+    return {"is_admin": config.is_admin(user.get("telegram_id"))}
 
 
 @app.get("/users")
 async def get_all_users(user=Depends(get_current_user)):
-    if not config.is_admin(user["telegram_id"]):
+    if not config.is_admin(user.get("telegram_id")):
         raise HTTPException(403, "Admin only")
     return db.read(USERS_FILE)
 
 
 @app.get("/users/pending")
 async def get_pending_users(user=Depends(get_current_user)):
-    if not config.is_admin(user["telegram_id"]):
+    if not config.is_admin(user.get("telegram_id")):
         raise HTTPException(403, "Admin only")
     return db.find_many(USERS_FILE, {"status": "pending"})
 
 
 @app.put("/users/{telegram_id}/status")
 async def update_user_status(telegram_id: int, req: UserStatusRequest, user=Depends(get_current_user)):
-    if not config.is_admin(user["telegram_id"]):
+    if not config.is_admin(user.get("telegram_id")):
         raise HTTPException(403, "Admin only")
     if req.status not in ["active", "blocked", "pending"]:
         raise HTTPException(400, "Invalid status")
@@ -247,7 +247,8 @@ async def update_user_status_by_username(username: str, req: UserStatusRequest, 
 # Session Routes
 @app.post("/sessions/start")
 async def start_session(user=Depends(get_current_user)):
-    session = services.start_session(user["telegram_id"])
+    user_id = user.get("telegram_id") or user.get("username")
+    session = services.start_session(user_id)
     if not session:
         raise HTTPException(400, "Ish vaqti tashqarida")
     return session
@@ -255,7 +256,8 @@ async def start_session(user=Depends(get_current_user)):
 
 @app.post("/sessions/end")
 async def end_session(user=Depends(get_current_user)):
-    session = services.end_session(user["telegram_id"])
+    user_id = user.get("telegram_id") or user.get("username")
+    session = services.end_session(user_id)
     if not session:
         raise HTTPException(404, "Faol sessiya topilmadi")
     return session
@@ -263,13 +265,15 @@ async def end_session(user=Depends(get_current_user)):
 
 @app.get("/sessions/today")
 async def get_today_session(user=Depends(get_current_user)):
-    session = services.get_today_session(user["telegram_id"])
+    user_id = user.get("telegram_id") or user.get("username")
+    session = services.get_today_session(user_id)
     return {"session": session}
 
 
 @app.post("/sessions/history")
 async def get_session_history(req: DateRangeRequest, user=Depends(get_current_user)):
-    return services.get_sessions_by_range(user["telegram_id"], req.start_date, req.end_date)
+    user_id = user.get("telegram_id") or user.get("username")
+    return services.get_sessions_by_range(user_id, req.start_date, req.end_date)
 
 
 @app.get("/sessions/should-track")
@@ -280,11 +284,12 @@ async def should_track(user=Depends(get_current_user)):
 # Location Routes
 @app.post("/locations/record")
 async def record_location(req: LocationRequest, user=Depends(get_current_user)):
-    session = services.get_today_session(user["telegram_id"])
+    user_id = user.get("telegram_id") or user.get("username")
+    session = services.get_today_session(user_id)
     if not session:
         raise HTTPException(400, "Avval sessiyani boshlang")
     
-    location = services.record_location(user["telegram_id"], session["id"], req.latitude, req.longitude)
+    location = services.record_location(user_id, session["id"], req.latitude, req.longitude)
     if not location:
         return {"recorded": False, "message": "Ish vaqti tashqarida"}
     return location
@@ -305,36 +310,41 @@ async def should_track_location(user=Depends(get_current_user)):
 async def submit_report(req: ReportRequest, user=Depends(get_current_user)):
     if not req.content.strip():
         raise HTTPException(400, "Hisobot bo'sh bo'lishi mumkin emas")
-    return services.submit_report(user["telegram_id"], req.content, req.date)
+    user_id = user.get("telegram_id") or user.get("username")
+    return services.submit_report(user_id, req.content, req.date)
 
 
 @app.get("/reports/today")
 async def get_today_report(user=Depends(get_current_user)):
     today = datetime.now().strftime("%Y-%m-%d")
-    report = services.get_user_report(user["telegram_id"], today)
+    user_id = user.get("telegram_id") or user.get("username")
+    report = services.get_user_report(user_id, today)
     return {"report": report, "submitted": report is not None}
 
 
 @app.get("/reports/date/{date}")
 async def get_report_by_date(date: str, user=Depends(get_current_user)):
-    return {"report": services.get_user_report(user["telegram_id"], date)}
+    user_id = user.get("telegram_id") or user.get("username")
+    return {"report": services.get_user_report(user_id, date)}
 
 
 @app.get("/reports/history")
 async def get_report_history(user=Depends(get_current_user)):
-    return db.find_many(REPORTS_FILE, {"user_id": user["telegram_id"]})
+    user_id = user.get("telegram_id") or user.get("username")
+    return db.find_many(REPORTS_FILE, {"user_id": user_id})
 
 
 @app.get("/reports/status")
 async def get_report_status(user=Depends(get_current_user)):
     today = datetime.now().strftime("%Y-%m-%d")
-    report = services.get_user_report(user["telegram_id"], today)
+    user_id = user.get("telegram_id") or user.get("username")
+    report = services.get_user_report(user_id, today)
     return {"submitted": report is not None}
 
 
 @app.get("/reports/all/{date}")
 async def get_all_reports_by_date(date: str, user=Depends(get_current_user)):
-    if not config.is_admin(user["telegram_id"]):
+    if not config.is_admin(user.get("telegram_id")):
         raise HTTPException(403, "Admin only")
     return db.find_many(REPORTS_FILE, {"date": date})
 
@@ -342,35 +352,37 @@ async def get_all_reports_by_date(date: str, user=Depends(get_current_user)):
 # Statistics Routes
 @app.post("/statistics/me")
 async def get_my_statistics(req: DateRangeRequest, user=Depends(get_current_user)):
-    return services.get_user_statistics(user["telegram_id"], req.start_date, req.end_date)
+    user_id = user.get("telegram_id") or user.get("username")
+    return services.get_user_statistics(user_id, req.start_date, req.end_date)
 
 
 @app.post("/statistics/user/{user_id}")
 async def get_user_statistics(user_id: int, req: DateRangeRequest, user=Depends(get_current_user)):
-    if not config.is_admin(user["telegram_id"]):
+    if not config.is_admin(user.get("telegram_id")):
         raise HTTPException(403, "Admin only")
     return services.get_user_statistics(user_id, req.start_date, req.end_date)
 
 
 @app.post("/statistics/all")
 async def get_all_statistics(req: DateRangeRequest, user=Depends(get_current_user)):
-    if not config.is_admin(user["telegram_id"]):
+    if not config.is_admin(user.get("telegram_id")):
         raise HTTPException(403, "Admin only")
     users = db.read(USERS_FILE)
     return [
-        {"user": u, "statistics": services.get_user_statistics(u["telegram_id"], req.start_date, req.end_date)}
+        {"user": u, "statistics": services.get_user_statistics(u.get("telegram_id"), req.start_date, req.end_date)}
         for u in users
     ]
 
 
 @app.post("/statistics/chart/me")
 async def get_my_chart(req: DateRangeRequest, user=Depends(get_current_user)):
-    return services.get_chart_data(user["telegram_id"], req.start_date, req.end_date)
+    user_id = user.get("telegram_id") or user.get("username")
+    return services.get_chart_data(user_id, req.start_date, req.end_date)
 
 
 @app.post("/statistics/chart/user/{user_id}")
 async def get_user_chart(user_id: int, req: DateRangeRequest, user=Depends(get_current_user)):
-    if not config.is_admin(user["telegram_id"]):
+    if not config.is_admin(user.get("telegram_id")):
         raise HTTPException(403, "Admin only")
     return services.get_chart_data(user_id, req.start_date, req.end_date)
 
@@ -383,7 +395,7 @@ async def get_work_settings(user=Depends(get_current_user)):
 
 @app.put("/settings")
 async def update_settings(req: SettingsRequest, user=Depends(get_current_user)):
-    if not config.is_admin(user["telegram_id"]):
+    if not config.is_admin(user.get("telegram_id")):
         raise HTTPException(403, "Admin only")
     
     current = get_settings()

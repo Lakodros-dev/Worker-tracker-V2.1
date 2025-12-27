@@ -22,6 +22,8 @@ class Config:
             self.ADMIN_IDS = [int(x.strip()) for x in admin_ids_str.split(",") if x.strip()]
     
     def is_admin(self, user_id: int) -> bool:
+        if user_id is None:
+            return False
         return user_id in self.ADMIN_IDS
 
 
