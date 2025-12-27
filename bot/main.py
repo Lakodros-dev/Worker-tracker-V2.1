@@ -1,5 +1,7 @@
 """Telegram Bot for Attendance System."""
 import logging
+import random
+import string
 from datetime import datetime
 from telegram import Update, WebAppInfo, KeyboardButton, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
@@ -13,6 +15,9 @@ logger = logging.getLogger(__name__)
 USERS_FILE = "users.json"
 USERS_PER_PAGE = 10
 
+# Global bot instance for sending messages
+bot_app = None
+
 
 async def get_user(telegram_id: int):
     return await db.find_one(USERS_FILE, "telegram_id", telegram_id)
@@ -21,17 +26,28 @@ async def get_user(telegram_id: int):
 async def create_user(telegram_id: int, username: str, first_name: str, last_name: str):
     """Create new user with pending status (admin is auto-active)."""
     status = "active" if config.is_admin(telegram_id) else "pending"
+    password = None
+    if status == "active":
+        password = ''.join(random.choices(string.digits, k=5))
+    
     user = {
         "telegram_id": telegram_id,
         "username": username,
         "first_name": first_name,
         "last_name": last_name,
         "status": status,
+        "password": password,
+        "auth_type": "telegram",
         "created_at": datetime.now().isoformat(),
         "updated_at": datetime.now().isoformat()
     }
     success = await db.append(USERS_FILE, user)
     return user if success else None
+
+
+def generate_password():
+    """Generate 5-digit password."""
+    return ''.join(random.choices(string.digits, k=5))
 
 
 async def update_user(telegram_id: int, updates: dict):
@@ -244,9 +260,31 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     elif data.startswith("approve_"):
         target_id = int(data.split("_")[1])
-        await update_user(target_id, {"status": "active"})
-        await query.answer("✅ Tasdiqlandi", show_alert=True)
-        # Refresh pending list
+        target_user = await get_user(target_id)
+        
+        # Parol generatsiya qilish
+        password = generate_password()
+        await update_user(target_id, {"status": "active", "password": password})
+        
+        # Foydalanuvchiga parol yuborish
+        try:
+            await context.bot.send_message(
+                chat_id=target_id,
+                text=(
+                    "🎉 *Hisobingiz tasdiqlandi!*\n\n"
+                    "Endi siz tizimdan foydalanishingiz mumkin.\n\n"
+                    "🔐 *Browser orqali kirish uchun:*\n"
+                    f"👤 Username: `{target_user.get('username', 'N/A')}`\n"
+                    f"🔑 Parol: `{password}`\n\n"
+                    "⚠️ Bu parolni xavfsiz joyda saqlang!"
+                ),
+                parse_mode="Markdown"
+            )
+            await query.answer("✅ Tasdiqlandi va parol yuborildi", show_alert=True)
+        except Exception as e:
+            logger.error(f"Failed to send password to user {target_id}: {e}")
+            await query.answer(f"✅ Tasdiqlandi. Parol: {password}", show_alert=True)
+        
         await show_pending_users(query, 0)
     
     elif data.startswith("block_"):
@@ -257,8 +295,30 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     elif data.startswith("unblock_"):
         target_id = int(data.split("_")[1])
-        await update_user(target_id, {"status": "active"})
-        await query.answer("✅ Blokdan chiqarildi", show_alert=True)
+        target_user = await get_user(target_id)
+        
+        # Yangi parol generatsiya qilish
+        password = generate_password()
+        await update_user(target_id, {"status": "active", "password": password})
+        
+        # Foydalanuvchiga xabar yuborish
+        try:
+            await context.bot.send_message(
+                chat_id=target_id,
+                text=(
+                    "🔓 *Hisobingiz blokdan chiqarildi!*\n\n"
+                    "🔐 *Yangi kirish ma'lumotlari:*\n"
+                    f"👤 Username: `{target_user.get('username', 'N/A')}`\n"
+                    f"🔑 Yangi parol: `{password}`\n\n"
+                    "⚠️ Bu parolni xavfsiz joyda saqlang!"
+                ),
+                parse_mode="Markdown"
+            )
+            await query.answer("✅ Blokdan chiqarildi va yangi parol yuborildi", show_alert=True)
+        except Exception as e:
+            logger.error(f"Failed to send password to user {target_id}: {e}")
+            await query.answer(f"✅ Blokdan chiqarildi. Yangi parol: {password}", show_alert=True)
+        
         await show_users_list(query, "blocked", 0)
     
     elif data.startswith("info_"):
@@ -378,6 +438,7 @@ async def show_user_info(query, telegram_id: int):
     status_emoji = {"pending": "⏳", "active": "✅", "blocked": "⛔"}
     name = f"{user['first_name']} {user.get('last_name', '')}".strip()
     username = f"@{user.get('username')}" if user.get('username') else "N/A"
+    password = user.get('password', 'Yo\'q')
     
     text = (
         f"👤 *Foydalanuvchi ma'lumotlari*\n\n"
@@ -385,6 +446,7 @@ async def show_user_info(query, telegram_id: int):
         f"🔗 Username: {username}\n"
         f"🆔 ID: `{telegram_id}`\n"
         f"📌 Status: {status_emoji.get(user['status'], '❓')} {user['status']}\n"
+        f"🔑 Parol: `{password}`\n"
         f"📅 Ro'yxatdan o'tgan: {user.get('created_at', 'N/A')[:10]}"
     )
     
