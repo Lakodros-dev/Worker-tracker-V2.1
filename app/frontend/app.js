@@ -90,6 +90,7 @@ async function init() {
 
         showScreen('main-app');
     } catch (error) {
+        debugDiv.innerHTML += `<br><b style="color:red">ERROR: ${error.message}</b>`;
         showError(error.message);
     }
 }
