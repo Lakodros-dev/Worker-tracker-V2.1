@@ -2,11 +2,15 @@
 import hashlib
 import hmac
 import json
+import logging
+from datetime import datetime
 from urllib.parse import parse_qs, unquote
 from typing import Optional
 from fastapi import HTTPException, Header
 from config import config
 from database import db, USERS_FILE
+
+logger = logging.getLogger(__name__)
 
 
 def validate_telegram_data(init_data: str) -> Optional[dict]:
@@ -33,8 +37,29 @@ def validate_telegram_data(init_data: str) -> Optional[dict]:
         if user_data:
             return json.loads(unquote(user_data))
         return None
-    except:
+    except Exception as e:
+        logger.error(f"Telegram data validation error: {e}")
         return None
+
+
+def create_user_from_telegram(user_data: dict) -> dict:
+    """Create new user from Telegram data."""
+    telegram_id = user_data["id"]
+    # Admin avtomatik active bo'ladi
+    status = "active" if config.is_admin(telegram_id) else "pending"
+    
+    user = {
+        "telegram_id": telegram_id,
+        "username": user_data.get("username", ""),
+        "first_name": user_data.get("first_name", ""),
+        "last_name": user_data.get("last_name", ""),
+        "status": status,
+        "created_at": datetime.now().isoformat(),
+        "updated_at": datetime.now().isoformat()
+    }
+    db.append(USERS_FILE, user)
+    logger.info(f"New user created: {telegram_id} ({user['first_name']})")
+    return user
 
 
 async def get_current_user(x_telegram_init_data: str = Header(None)):
@@ -47,8 +72,25 @@ async def get_current_user(x_telegram_init_data: str = Header(None)):
         raise HTTPException(status_code=401, detail="Invalid Telegram data")
     
     user = db.find_one(USERS_FILE, "telegram_id", user_data["id"])
+    
+    # Foydalanuvchi topilmasa - avtomatik ro'yxatdan o'tkazish
     if not user:
-        raise HTTPException(status_code=403, detail="User not registered")
+        user = create_user_from_telegram(user_data)
+    else:
+        # Mavjud foydalanuvchi ma'lumotlarini yangilash
+        needs_update = (
+            user.get("username") != user_data.get("username", "") or
+            user.get("first_name") != user_data.get("first_name", "") or
+            user.get("last_name") != user_data.get("last_name", "")
+        )
+        if needs_update:
+            db.update(USERS_FILE, "telegram_id", user_data["id"], {
+                "username": user_data.get("username", ""),
+                "first_name": user_data.get("first_name", ""),
+                "last_name": user_data.get("last_name", ""),
+                "updated_at": datetime.now().isoformat()
+            })
+            user = db.find_one(USERS_FILE, "telegram_id", user_data["id"])
     
     if user["status"] == "blocked":
         raise HTTPException(status_code=403, detail="User blocked")
