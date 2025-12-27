@@ -1,6 +1,13 @@
 // Telegram WebApp
 const tg = window.Telegram?.WebApp;
-const isTelegramWebApp = tg && tg.initData && tg.initData.length > 0;
+const isTelegramWebApp = !!(tg && tg.initData && tg.initData.length > 0);
+
+console.log('Telegram WebApp check:', {
+    tg: !!tg,
+    initData: tg?.initData,
+    initDataLength: tg?.initData?.length,
+    isTelegramWebApp
+});
 
 if (isTelegramWebApp) {
     tg.ready();
@@ -174,11 +181,16 @@ async function init() {
         await initMainApp();
     } else {
         // Browser - auth tekshirish
-        console.log('Browser mode, checking auth token...');
-        if (authToken) {
+        console.log('Browser mode, authToken:', authToken ? 'exists' : 'null');
+        if (authToken && authToken !== 'null' && authToken !== 'undefined') {
             try {
-                console.log('Auth token found, checking...');
-                const check = await api('/auth/check');
+                console.log('Auth token found, checking with API...');
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+                const check = await api('/auth/check', { signal: controller.signal });
+                clearTimeout(timeoutId);
+
                 console.log('Auth check result:', check);
                 if (check.authenticated) {
                     currentUser = check.user;
@@ -191,6 +203,7 @@ async function init() {
                 authToken = null;
             }
         }
+        console.log('Showing login screen...');
         showScreen('login-screen');
     }
 }
