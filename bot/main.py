@@ -3,7 +3,7 @@ import logging
 import random
 import string
 from datetime import datetime
-from telegram import Update, WebAppInfo, KeyboardButton, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, KeyboardButton, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
 from config import config
@@ -112,11 +112,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def show_main_menu(update: Update, name: str):
-    """Show main menu with WebApp button."""
+    """Show main menu."""
     keyboard = []
-    
-    if config.WEBAPP_URL:
-        keyboard.append([KeyboardButton(text="📱 Ilovani ochish", web_app=WebAppInfo(url=config.WEBAPP_URL))])
     
     keyboard.append([KeyboardButton(text="📍 Joylashuvni yuborish", request_location=True)])
     keyboard.append([KeyboardButton(text="📊 Statistika"), KeyboardButton(text="ℹ️ Yordam")])

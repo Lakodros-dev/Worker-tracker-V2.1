@@ -1,12 +1,22 @@
 // Telegram WebApp
 const tg = window.Telegram?.WebApp;
-const isTelegramWebApp = !!(tg && tg.initData && tg.initData.length > 0);
 
-console.log('Telegram WebApp check:', {
+// Localhost/development rejimini aniqlash
+const isLocalhost = window.location.hostname === 'localhost' ||
+    window.location.hostname === '127.0.0.1' ||
+    window.location.hostname.includes('192.168.');
+
+// Telegram WebApp tekshiruvi - localhost'da yumshoqroq
+const isTelegramWebApp = !!(tg && tg.initData && tg.initData.length > 0);
+const isDevMode = isLocalhost && !isTelegramWebApp;
+
+console.log('Environment check:', {
     tg: !!tg,
     initData: tg?.initData,
     initDataLength: tg?.initData?.length,
-    isTelegramWebApp
+    isTelegramWebApp,
+    isLocalhost,
+    isDevMode
 });
 
 if (isTelegramWebApp) {
@@ -37,6 +47,10 @@ async function api(endpoint, options = {}) {
     } else if (authToken) {
         headers['X-Browser-Token'] = authToken;
         console.log('Using browser token');
+    } else if (isDevMode) {
+        // Localhost dev rejimida test uchun
+        headers['X-Dev-Mode'] = 'true';
+        console.log('Using dev mode (no auth header)');
     }
 
     try {
@@ -241,12 +255,13 @@ async function initMainApp() {
             addLogoutButton();
         }
 
-        // Load initial data
-        await loadDashboard();
-        await loadReportHistory();
-        initDateInputs();
-
+        // Avval asosiy ekranga o'tish - loader'ni to'xtatish
         showScreen('main-app');
+
+        // Keyin ma'lumotlarni yuklash (xato bo'lsa ham ekran ko'rinadi)
+        loadDashboard().catch(err => console.error('Dashboard error:', err));
+        loadReportHistory().catch(err => console.error('Report history error:', err));
+        initDateInputs();
     } catch (error) {
         console.error('Init error:', error);
         if (!isTelegramWebApp) {
