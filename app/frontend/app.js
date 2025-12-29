@@ -74,8 +74,21 @@ async function api(endpoint, options = {}) {
 
 // Screen Management
 function showScreen(screenId) {
+    // 1. Loader (loading) ekrani klassini olib tashlash va yashirish
+    const loader = document.getElementById('loading');
+    if (loader) {
+        loader.classList.remove('active');
+        loader.style.display = 'none';
+    }
+
+    // 2. Barcha ekranlardan 'active' klassini olib tashlash
     document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-    document.getElementById(screenId).classList.add('active');
+
+    // 3. Kerakli ekranga 'active' klassini qo'shish
+    const targetScreen = document.getElementById(screenId);
+    if (targetScreen) {
+        targetScreen.classList.add('active');
+    }
 }
 
 function showError(message) {
@@ -232,6 +245,9 @@ async function initMainApp() {
             console.log('Current user:', currentUser);
         }
 
+        // Asosiy ma'lumotlar kelishi bilan ekranni ko'rsatish (loader o'chadi)
+        showScreen('main-app');
+
         // Check admin status
         console.log('Checking admin status...');
         const adminCheck = await api('/users/is-admin');
@@ -255,10 +271,7 @@ async function initMainApp() {
             addLogoutButton();
         }
 
-        // Avval asosiy ekranga o'tish - loader'ni to'xtatish
-        showScreen('main-app');
-
-        // Keyin ma'lumotlarni yuklash (xato bo'lsa ham ekran ko'rinadi)
+        // Qolgan ma'lumotlarni fon rejimida yuklash
         loadDashboard().catch(err => console.error('Dashboard error:', err));
         loadReportHistory().catch(err => console.error('Report history error:', err));
         initDateInputs();

@@ -33,11 +33,21 @@ body {
 
 /* Loading */
 #loading {
-    display: flex;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 9999;
+    background: var(--bg-color);
+    display: none;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    min-height: 100vh;
+}
+
+#loading.active {
+    display: flex;
 }
 
 .loader {
